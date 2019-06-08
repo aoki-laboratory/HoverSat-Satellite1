@@ -46,6 +46,8 @@ int     cnt10 = 0;
 
 unsigned long time_ms;
 unsigned long time_buff = 0;
+unsigned char current_time = 0; 
+unsigned char old_time = 0;  
 
 byte    counter;
 char charBuf[100];
@@ -267,35 +269,38 @@ void loop() {
       pattern = 0;
       break;
 
-    case 31:
+
+    // CountDown
+    case 111:    
+      if( current_time < 1 ) {
+        time_buff = time_ms;
+        pattern = 112;
+        tx_pattern = 11;
+        break;
+      }
+      bts.println( 60 - current_time );
+      break;
+
+    case 112:    
+      hover_flag = true;
+      M5.Lcd.clear();
       DuctedFan.attach(DuctedFanPin);
       DuctedFan.write(0);
-      cnt10 = 0;
-      pattern = 32;
+      delay(3000);
+      DuctedFan.write(hover_val);
+      delay(5000);
+      pattern = 113;      
       break;
 
-    case 32:
-      if( cnt10 >= 300 )
-        pattern = 33;
-      break;
-
-    case 33:
-      DuctedFan.write(50);
+    case 113:   
+      inc_flag = true; 
+      stepper( ex_length, ex_speed );
       pattern = 0;
       break;
+
     
   }
 
-/*
-  bts.print(pattern);
-  bts.print(",  ");
-  bts.print(Limit1State);
-  bts.println(",  ");*/
-  //bts.print(stepper_status);
-  //bts.println(", ");
-  /*
-  bts.println(hx711_data);
-  */
 
   // Send Data to Module.
   while (Serial.available() > 0) {
@@ -447,6 +452,12 @@ void bluetooth_rx(void) {
         rx_pattern = 0;
         tx_pattern = 11;
         break;
+
+      case 20:
+        rx_pattern = 0;
+        tx_pattern = 20;
+        pattern = 111;
+        break;
         
       case 21:
         rx_pattern = 0;
@@ -552,6 +563,7 @@ void bluetooth_tx(void) {
       bts.print(" 11 : Telemetry\n");
       bts.print(" 12 : Read log\n");
       bts.print("\n");
+      bts.print(" 20 : Sequence Control\n");
       bts.print(" 21 : Start/Stop Hovering\n");
       bts.print(" 22 : Start Extruding\n");
       bts.print(" 23 : Start Winding\n");
@@ -584,6 +596,11 @@ void bluetooth_tx(void) {
       bts.print(time_ms);
       bts.print("  ");
       bts.println(pattern);
+      break;
+
+    case 20:
+      bts.print(" Starting Sequence...\n");
+      tx_pattern = 1;
       break;
 
     case 21:
@@ -740,6 +757,7 @@ void getTime(void){
   timeStr = (String)timeinfo.tm_hour
           + ":" + (String)timeinfo.tm_min
           + ":" + (String)timeinfo.tm_sec;
+  current_time = timeinfo.tm_sec;
 }
 
 
