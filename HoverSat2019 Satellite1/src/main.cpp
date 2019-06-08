@@ -15,6 +15,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <time.h>
+#include <EEPROM.h>
 #include "utility/MPU9250.h"
 #include "BluetoothSerial.h"
 
@@ -37,6 +38,9 @@
 //Global
 //------------------------------------------------------------------//
 int     pattern = 0;
+int     tx_pattern = 0;
+int     rx_pattern = 0;
+int     rx_val = 0;
 bool    hover_flag = false;
 int     cnt10 = 0;
 
@@ -60,6 +64,9 @@ int  Limit2State = 1;
 
 
 BluetoothSerial bts;
+String  bts_rx;
+char bts_rx_buffer[16];
+int bts_index = 0;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
@@ -95,7 +102,6 @@ MPU9250 IMU;
 
 // DuctedFan
 static const int DuctedFanPin = 15;
-unsigned char hover_val = 0;
 Servo DuctedFan;
 
 // Timer Interrupt
@@ -107,6 +113,11 @@ int iTimer10;
 
 hw_timer_t * timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Parameters
+unsigned char hover_val = 0;
+unsigned int ex_length = 2000;
+unsigned int ex_speed = 200;
 
 
 //Global
@@ -121,6 +132,10 @@ void getTime(void);
 void writeData(void);
 void writeDataInitial(void);
 void ReceiveStepperData( void );
+void bluetooth_rx(void);
+void bluetooth_tx(void);
+void eeprom_write(void);
+void eeprom_read(void);
 
 
 //Setup
@@ -129,6 +144,7 @@ void setup() {
 
   M5.begin();
   Wire.begin();
+  EEPROM.begin(128);
   M5.Lcd.clear();
   M5.Lcd.drawJpgFile(SD, "/Image/Picture.jpg");
   M5.Lcd.setTextColor(BLACK);
@@ -136,7 +152,7 @@ void setup() {
   M5.Lcd.setCursor(88, 160);
   M5.Lcd.println("HoverSat");
   M5.Lcd.setCursor(82, 200);
-  M5.Lcd.println("Sattelite");
+  M5.Lcd.println("Satellite1");
   
   delay(1000);
 
@@ -150,6 +166,8 @@ void setup() {
     delay(500);
     M5.Lcd.print(".");
   }
+
+  eeprom_read();
 
   // timeSet
   getTimeFromNTP();
@@ -194,6 +212,8 @@ void loop() {
 
   Timer_Interrupt();
   ReceiveStepperData();
+  bluetooth_rx();
+  bluetooth_tx();
 
   /*if( (timeinfo.tm_hour == 18) &&  (timeinfo.tm_min == 3) && (timeinfo.tm_sec == 0) ) {
     pattern = 31;
@@ -225,7 +245,7 @@ void loop() {
       break;
 
     case 11:    
-      stepper( 5300, 170 );
+      stepper( ex_length, ex_speed );
       pattern = 12;
       cnt10 = 0;
       break;
@@ -237,7 +257,7 @@ void loop() {
 
     case 21:
       //( length, speed, accel )
-      stepper( -5800, 170 );
+      stepper( ex_length*-1-1000, ex_speed );
       pattern = 22;
       cnt10 = 0;
       break;
@@ -266,11 +286,11 @@ void loop() {
     
   }
 
-
+/*
   bts.print(pattern);
   bts.print(",  ");
   bts.print(Limit1State);
-  bts.println(",  ");
+  bts.println(",  ");*/
   //bts.print(stepper_status);
   //bts.println(", ");
   /*
@@ -286,21 +306,19 @@ void loop() {
       
   // Button Control
   M5.update();
-  if (M5.BtnA.pressedFor(700)) {
-  hover_flag = !hover_flag;
-  // Hover Control
+  if (M5.BtnA.wasPressed()) {
+    hover_flag = !hover_flag;
+    // Hover Control
     if(hover_flag) {
       M5.Lcd.clear();
       DuctedFan.attach(DuctedFanPin);
       DuctedFan.write(0);
+      delay(3000);
+      DuctedFan.write(hover_val);
     } else {
       M5.Lcd.clear();
       DuctedFan.detach();
-      hover_val = 0;
-    }
-  } else if (M5.BtnA.wasPressed()) {
-    if(hover_val<100) hover_val+=5;
-    DuctedFan.write(hover_val);    
+    } 
   } else if (M5.BtnB.wasPressed() && pattern == 0) {      
     inc_flag = true;
     pattern = 11;
@@ -375,6 +393,244 @@ void Timer_Interrupt( void ){
     }
 
   }
+}
+
+
+// EEPROM Write
+//------------------------------------------------------------------// 
+void eeprom_write(void) {
+  EEPROM.write(0, hover_val);
+  EEPROM.write(1, (ex_length & 0xFF));
+  EEPROM.write(2, (ex_length>>8 & 0xFF));
+  EEPROM.write(3, (ex_length>>16 & 0xFF));
+  EEPROM.write(4, (ex_length>>24 & 0xFF));
+  EEPROM.write(5, (ex_speed & 0xFF));
+  EEPROM.write(6, (ex_speed>>8 & 0xFF));
+  EEPROM.write(7, (ex_speed>>16 & 0xFF));
+  EEPROM.write(8, (ex_speed>>24 & 0xFF));
+  EEPROM.commit();
+}
+
+// EEPROM Read
+//------------------------------------------------------------------// 
+void eeprom_read(void) {
+    hover_val = EEPROM.read(0);
+    ex_length = EEPROM.read(1) + (EEPROM.read(2)<<8) + (EEPROM.read(3)<<16) + (EEPROM.read(4)<<24);
+    ex_speed = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
+}
+
+
+// Bluetooth RX
+//------------------------------------------------------------------//
+void bluetooth_rx(void) {
+
+  while (bts.available() > 0) {
+    bts_rx_buffer[bts_index] = bts.read();
+    bts.write(bts_rx_buffer[bts_index]);
+    
+    if( bts_rx_buffer[bts_index] == '/' ) {
+      bts.print("\n\n"); 
+      if( tx_pattern == 1 ) {
+        rx_pattern = atoi(bts_rx_buffer);
+      } else {
+        rx_val = atof(bts_rx_buffer);
+      }
+      bts_index = 0;
+      
+      switch ( rx_pattern ) {
+          
+      case 0:
+        tx_pattern = 0;
+        break;
+        
+      case 11:
+        rx_pattern = 0;
+        tx_pattern = 11;
+        break;
+        
+      case 21:
+        rx_pattern = 0;
+        tx_pattern = 21;
+        hover_flag = !hover_flag;
+        if(hover_flag) {
+          M5.Lcd.clear();
+          DuctedFan.attach(DuctedFanPin);
+          DuctedFan.write(0);
+          delay(3000);
+          DuctedFan.write(hover_val);
+        } else {
+          M5.Lcd.clear();
+          DuctedFan.detach();
+        }
+        break;
+
+      case 22:
+        rx_pattern = 0;
+        tx_pattern = 22;    
+        inc_flag = true;
+        pattern = 11;
+        break;
+
+      case 23:
+        rx_pattern = 0;
+        tx_pattern = 23;    
+        inc_flag = true;
+        pattern = 21;
+        break;
+
+      case 24:
+        rx_pattern = 0;
+        tx_pattern = 24;    
+        //SendByte(STEPMOTOR_I2C_ADDR, '!');
+        SendByte(STEPMOTOR_I2C_ADDR, 0x18);
+        delay(1000);
+        SendCommand(STEPMOTOR_I2C_ADDR, "$X");
+        pattern = 0;
+        break;
+
+      case 31:
+        tx_pattern = 31;
+        rx_pattern = 41;
+        break;
+
+      case 41:
+        hover_val = rx_val;
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
+
+      case 32:
+        tx_pattern = 32;
+        rx_pattern = 42;
+        break;
+
+      case 42:
+        ex_length = rx_val;
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
+
+      case 33:
+        tx_pattern = 33;
+        rx_pattern = 43;
+        break;
+
+      case 43:
+        ex_speed = rx_val;
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
+          
+
+      }
+      
+    } else {
+        bts_index++;
+    }
+  }
+
+
+}
+
+
+// Bluetooth TX
+//------------------------------------------------------------------//
+void bluetooth_tx(void) {
+
+    switch ( tx_pattern ) {
+            
+    case 0:
+      delay(30);
+      bts.print("\n\n\n\n\n\n");
+      bts.print(" HoverSat Satellite1 (M5Stack version) "
+                         "Test Program Ver1.00\n");
+      bts.print("\n");
+      bts.print(" Satellite control\n");
+      bts.print(" 11 : Telemetry\n");
+      bts.print(" 12 : Read log\n");
+      bts.print("\n");
+      bts.print(" 21 : Start/Stop Hovering\n");
+      bts.print(" 22 : Start Extruding\n");
+      bts.print(" 23 : Start Winding\n");
+      bts.print(" 24 : Pause\n");
+      bts.print("\n");
+      bts.print(" Set parameters  [Current val]\n");
+      bts.print(" 31 : DuctedFan Output [");
+      bts.print(hover_val);
+      bts.print("%]\n");
+      bts.print(" 32 : Extension length [");
+      bts.print(ex_length);
+      bts.print("mm]\n");
+      bts.print(" 33 : Extension Speed [");
+      bts.print(ex_speed);
+      bts.print("mm/s]\n");
+      
+      bts.print("\n");
+      bts.print(" Please enter 11 to 35  ");
+      
+      tx_pattern = 1;
+      break;
+        
+    case 1: 
+      break;
+        
+    case 2:
+      break;
+        
+    case 11:
+      bts.print(time_ms);
+      bts.print("  ");
+      bts.println(pattern);
+      break;
+
+    case 21:
+      if(hover_flag) {
+        bts.print(" Start Hovering...\n");
+      } else {
+        bts.print(" Stop Hovering...\n");
+      }
+      delay(1000);
+      tx_pattern = 0;
+      break;
+
+    case 22:
+      bts.print(" Start Extruding...\n");
+      tx_pattern = 11;
+      break;
+
+    case 23:
+      bts.print(" Start Winding...\n");
+      tx_pattern = 11;
+      break;
+
+    case 24:
+      bts.print(" Pause...\n");
+      tx_pattern = 11;
+      break;
+
+              
+    case 31:
+      bts.print(" DuctedFan Output [%] -");
+      bts.print(" Please enter 0 to 100 ");
+      tx_pattern = 2;
+      break;
+
+    case 32:
+      bts.print(" Extension Length [mm] -");
+      bts.print(" Please enter 0 to 10,000 ");
+      tx_pattern = 2;
+      break;
+
+    case 33:
+      bts.print(" Extension Speed [mm/s] -");
+      bts.print(" Please enter 0 to 500 ");
+      tx_pattern = 2;
+      break;
+                 
+    }
 }
 
 
