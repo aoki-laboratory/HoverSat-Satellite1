@@ -29,7 +29,7 @@
 #define   ONE_ROTATION_LENGTH 230
 // #define  STEPMOTOR_I2C_ADDR 0x71
 
-#define BufferRecords 128
+#define BufferRecords 32
 #define STEPPER_BUFFER  80
 
 
@@ -39,6 +39,9 @@
 int     pattern = 0;
 bool    hover_flag = false;
 int     cnt10 = 0;
+
+unsigned long time_ms;
+unsigned long time_buff = 0;
 
 byte    counter;
 char charBuf[100];
@@ -72,10 +75,12 @@ String dateStr;
 String timeStr;
 
 File file;
-const char* fname = "/log/btnevent_log.tsv";
+String fname_buff;
+const char* fname;
 
 typedef struct {
     String  log_time;
+    String  log_time_ms;
     int     log_pattern;
     String  log_status;
 } RecordType;
@@ -139,7 +144,7 @@ void setup() {
   M5.Lcd.setTextColor(GREEN ,BLACK);
   M5.Lcd.fillScreen(BLACK);
 
-  bts.begin("M5Stack Mother");
+  bts.begin("M5Stack Satellite1");
   WiFi.begin(ssid, pass);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -148,6 +153,15 @@ void setup() {
 
   // timeSet
   getTimeFromNTP();
+  getTime();
+  fname_buff  = "/log/Satellite1_log_"
+              +(String)(timeinfo.tm_year + 1900)
+              +"_"+(String)(timeinfo.tm_mon + 1)
+              +"_"+(String)timeinfo.tm_mday
+              +"_"+(String)timeinfo.tm_hour
+              +"_"+(String)timeinfo.tm_min
+              +".csv";
+  fname = fname_buff.c_str();
 
   pinMode(Limit1Pin, INPUT);
   pinMode(Limit2Pin, INPUT);
@@ -179,12 +193,11 @@ void setup() {
 void loop() {
 
   Timer_Interrupt();
-  getTime();
   ReceiveStepperData();
 
-  if( (timeinfo.tm_hour == 18) &&  (timeinfo.tm_min == 3) && (timeinfo.tm_sec == 0) ) {
+  /*if( (timeinfo.tm_hour == 18) &&  (timeinfo.tm_min == 3) && (timeinfo.tm_sec == 0) ) {
     pattern = 31;
-  }
+  }*/
 
   int readBank = !writeBank;
 
@@ -196,11 +209,13 @@ void loop() {
     file = SD.open(fname, FILE_APPEND);
     for (int i = 0; i < BufferRecords; i++) {
         file.print(temp[i].log_time);
-        file.print(" ");
+        file.print(",");
+        file.print(temp[i].log_time_ms);
+        file.print(",");
         file.print(temp[i].log_pattern);
-        file.print(" ");
+        file.print(",");
         //file.print(temp[i].log_status);
-        file.println(" ");
+        file.println(",");
     }
     file.close();
   }
@@ -209,8 +224,7 @@ void loop() {
     case 0:
       break;
 
-    case 11:
-    
+    case 11:    
       stepper( 5300, 170 );
       pattern = 12;
       cnt10 = 0;
@@ -316,18 +330,19 @@ void Timer_Interrupt( void ){
     portEXIT_CRITICAL(&timerMux);
 
     cnt10++;
+    time_ms = millis()-time_buff;
+    getTime();
 
-  if( pattern >= 11 ) {
     if (bufferIndex[writeBank] < BufferRecords) {
       RecordType* rp = &buffer[writeBank][bufferIndex[writeBank]];
       rp->log_time = timeStr;
+      rp->log_time_ms = time_ms;
       rp->log_pattern = pattern;
       //rp->log_status = status_buffer;
       if (++bufferIndex[writeBank] >= BufferRecords) {
           writeBank = !writeBank;
       }      
     }
-  }
 
     Limit1State = digitalRead(Limit1Pin);
     Limit2State = digitalRead(Limit2Pin);
