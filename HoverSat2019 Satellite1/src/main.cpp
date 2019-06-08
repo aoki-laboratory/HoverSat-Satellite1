@@ -217,10 +217,6 @@ void loop() {
   bluetooth_rx();
   bluetooth_tx();
 
-  /*if( (timeinfo.tm_hour == 18) &&  (timeinfo.tm_min == 3) && (timeinfo.tm_sec == 0) ) {
-    pattern = 31;
-  }*/
-
   int readBank = !writeBank;
 
   if (bufferIndex[readBank] >= BufferRecords) {
