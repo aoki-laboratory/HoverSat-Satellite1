@@ -1,8 +1,8 @@
 //------------------------------------------------------------------//
 //Supported MCU:   ESP32 (M5Stack)
-//File Contents:   HoverSat Satellite
+//File Contents:   HoverSat Satellite1
 //Version number:  Ver.1.0
-//Date:            2019.05.13
+//Date:            2019.06.08
 //------------------------------------------------------------------//
  
 //This program supports the following boards:
@@ -32,10 +32,6 @@
 #define BufferRecords 128
 #define STEPPER_BUFFER  80
 
-//#define HX711_DOUT  2
-//#define HX711_SCLK  5
-//#define OUT_VOL     0.0007f
-//#define LOAD        500.0f
 
 
 //Global
@@ -92,10 +88,6 @@ static volatile int bufferIndex[2] = {0, 0};
 // MPU9250
 MPU9250 IMU; 
 
-// HX711
-//float hx711_offset;
-//float hx711_data;
-
 // DuctedFan
 static const int DuctedFanPin = 15;
 unsigned char hover_val = 0;
@@ -114,12 +106,6 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 //Global
 //------------------------------------------------------------------//
-/*void AE_HX711_Init(void);
-void AE_HX711_Reset(void);
-long AE_HX711_Read(void);
-long AE_HX711_Averaging(long adc,char num);
-float AE_HX711_getGram(char num);*/
-
 void IRAM_ATTR onTimer(void);
 void SendByte(byte addr, byte b);
 void SendCommand(byte addr, char *c);
@@ -178,15 +164,6 @@ void setup() {
   SendCommand(STEPMOTOR_I2C_ADDR, "$2=1000"); // mm per step
   SendCommand(STEPMOTOR_I2C_ADDR, "$8=0.5"); // Accel
   SendCommand(STEPMOTOR_I2C_ADDR, "$16=0"); // Hard Limit
-
-  //SendCommand(STEPMOTOR_I2C_ADDR, "G1 X-100Y-100Z-100 F226.21");
-
-
-/*
-  AE_HX711_Init();
-  AE_HX711_Reset();
-  hx711_offset = AE_HX711_getGram(30); 
-*/
 
 //SendCommand(STEPMOTOR_I2C_ADDR, "G1 X99Y99Z99 F100"); // Accel
 
@@ -374,8 +351,6 @@ void Timer_Interrupt( void ){
     break;
 
     case 2:
-      //hx711_data = AE_HX711_getGram(5) - hx711_offset;
-      //SendByte(STEPMOTOR_I2C_ADDR, '?');
       break;
     
     case 10:
@@ -516,77 +491,3 @@ void writeData(void) {
   file.close();
 }
 
-
-//AE HX711 Init
-//------------------------------------------------------------------//
-/*void AE_HX711_Init(void)
-{
-  pinMode(HX711_SCLK, OUTPUT);
-  pinMode(HX711_DOUT, INPUT);
-}
-
-//AE HX711 Reset
-//------------------------------------------------------------------//
-void AE_HX711_Reset(void)
-{
-  digitalWrite(HX711_SCLK,1);
-  delayMicroseconds(100);
-  digitalWrite(HX711_SCLK,0);
-  delayMicroseconds(100); 
-}
-
-//AE HX711 Read
-//------------------------------------------------------------------//
-long AE_HX711_Read(void)
-{
-  long data=0;
-  while(digitalRead(HX711_DOUT)!=0);
-  delayMicroseconds(10);
-  for(int i=0;i<24;i++)
-  {
-    digitalWrite(HX711_SCLK,1);
-    delayMicroseconds(5);
-    digitalWrite(HX711_SCLK,0);
-    delayMicroseconds(5);
-    data = (data<<1)|(digitalRead(HX711_DOUT));
-  }
-  //Serial.println(data,HEX);   
-  digitalWrite(HX711_SCLK,1);
-  delayMicroseconds(10);
-  digitalWrite(HX711_SCLK,0);
-  delayMicroseconds(10);
-  return data^0x800000; 
-}
-
-
-long AE_HX711_Averaging(long adc,char num)
-{
-  long sum = 0;
-  for (int i = 0; i < num; i++) sum += AE_HX711_Read();
-  return sum / num;
-}
-
-float AE_HX711_getGram(char num)
-{
-  #define HX711_R1  20000.0f
-  #define HX711_R2  8200.0f
-  #define HX711_VBG 1.25f
-  #define HX711_AVDD      4.2987f//(HX711_VBG*((HX711_R1+HX711_R2)/HX711_R2))
-  #define HX711_ADC1bit   HX711_AVDD/16777216 //16777216=(2^24)
-  #define HX711_PGA 128
-  #define HX711_SCALE     (OUT_VOL * HX711_AVDD / LOAD *HX711_PGA)
-  
-  float data;
-
-  data = AE_HX711_Averaging(AE_HX711_Read(),num)*HX711_ADC1bit; 
-  //Serial.println( HX711_AVDD);   
-  //Serial.println( HX711_ADC1bit);   
-  //Serial.println( HX711_SCALE);   
-  //Serial.println( data);   
-  data =  data / HX711_SCALE;
-
-
-  return data;
-}
-
-*/
