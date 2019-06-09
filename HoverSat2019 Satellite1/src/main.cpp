@@ -42,6 +42,7 @@ int     tx_pattern = 0;
 int     rx_pattern = 0;
 int     rx_val = 0;
 bool    hover_flag = false;
+bool    log_flag = false;
 int     cnt10 = 0;
 
 unsigned long time_ms;
@@ -63,6 +64,8 @@ static const int Limit1Pin = 17;
 static const int Limit2Pin = 34;
 int  Limit1State = 1;
 int  Limit2State = 1;
+const int stepper_enable = 0;
+char  stepper_enable_status = 1;
 
 
 BluetoothSerial bts;
@@ -72,8 +75,11 @@ int bts_index = 0;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-char ssid[] = "Buffalo-G-0CBA";
-char pass[] = "hh4aexcxesasx";
+//char ssid[] = "Buffalo-G-0CBA";
+//char pass[] = "hh4aexcxesasx";
+
+char ssid[] = "Macaw";
+char pass[] = "1234567890";
 
 // Time
 char ntpServer[] = "ntp.jst.mfeed.ad.jp";
@@ -120,6 +126,7 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 unsigned char hover_val = 0;
 unsigned int ex_length = 2000;
 unsigned int ex_speed = 200;
+unsigned char wait = 5;
 
 
 //Global
@@ -185,7 +192,7 @@ void setup() {
 
   pinMode(Limit1Pin, INPUT);
   pinMode(Limit2Pin, INPUT);
-    
+  pinMode(stepper_enable, INPUT);
 
   // Initialize Timer Interrupt
   timer = timerBegin(0, 80, true);
@@ -249,9 +256,18 @@ void loop() {
       break;
 
     case 12:
-      if( cnt10 >= 200 )
-      pattern = 0;
+      if( cnt10 >= 100 ) {
+        pattern = 13;
+      }
       break;
+
+    case 13:
+      if( stepper_enable_status==1 ) {
+        pattern = 0;
+      }
+      break;
+    
+    
 
     case 21:
       //( length, speed, accel )
@@ -261,9 +277,17 @@ void loop() {
       break;
 
     case 22:
-      if( cnt10 >= 200 )
-      pattern = 0;
+      if( cnt10 >= 100 ) {
+        pattern = 13;
+      }
       break;
+
+    case 23:
+      if( stepper_enable_status==1 ) {
+        pattern = 0;
+      }
+      break;
+    
 
 
     // CountDown
@@ -272,6 +296,8 @@ void loop() {
         time_buff = time_ms;
         pattern = 112;
         tx_pattern = 11;
+        bts.println( 0 );
+        log_flag = true;
         break;
       }
       bts.println( 60 - current_time );
@@ -291,8 +317,49 @@ void loop() {
     case 113:   
       inc_flag = true; 
       stepper( ex_length, ex_speed );
-      pattern = 0;
+      pattern = 114;
+      cnt10 = 0;
       break;
+
+    case 114:   
+      if( cnt10 >= 100 ) {
+        pattern = 115;
+      }
+      break;
+
+    case 115:   
+      if( stepper_enable_status==1 ) {
+        pattern = 116;
+        cnt10 = 0;
+      }
+      break;
+
+    case 116:   
+      if( cnt10 >= wait*100 ) {
+        pattern = 117;
+      }
+      break;
+
+    case 117:
+      //( length, speed, accel )
+      inc_flag = true;
+      stepper( ex_length*-1-1000, ex_speed );
+      pattern = 118;
+      cnt10 = 0;
+      break;
+
+    case 118:   
+      if( cnt10 >= 100 ) {
+        pattern = 119;
+      }
+      break;
+
+    case 119:
+      if( stepper_enable_status==1 ) {
+        pattern = 0;
+      }
+      break;
+
 
     
   }
@@ -327,13 +394,15 @@ void loop() {
     inc_flag = true;
     pattern = 21;
   }
-  
-  if(Limit1State==0 && Limit2State==0) {
-    //SendByte(STEPMOTOR_I2C_ADDR, '!');
-    SendByte(STEPMOTOR_I2C_ADDR, 0x18);
-    delay(1000);
-    SendCommand(STEPMOTOR_I2C_ADDR, "$X");
-    pattern = 0;
+
+  if(Limit1State==0 && Limit2State==0 ) {
+    if(pattern == 13 || pattern == 23 || pattern == 119) {
+      //SendByte(STEPMOTOR_I2C_ADDR, '!');
+      SendByte(STEPMOTOR_I2C_ADDR, 0x18);
+      delay(1000);
+      SendCommand(STEPMOTOR_I2C_ADDR, "$X");
+      pattern = 0;
+    }
   }
 
 }
@@ -352,7 +421,7 @@ void Timer_Interrupt( void ){
     time_ms = millis()-time_buff;
     getTime();
 
-    if (bufferIndex[writeBank] < BufferRecords) {
+    if (bufferIndex[writeBank] < BufferRecords && log_flag) {
       RecordType* rp = &buffer[writeBank][bufferIndex[writeBank]];
       rp->log_time = timeStr;
       rp->log_time_ms = time_ms;
@@ -365,8 +434,7 @@ void Timer_Interrupt( void ){
 
     Limit1State = digitalRead(Limit1Pin);
     Limit2State = digitalRead(Limit2Pin);
-
-
+    stepper_enable_status = digitalRead(stepper_enable);
 
 
 //    totalInterruptCounter++;
@@ -409,6 +477,7 @@ void eeprom_write(void) {
   EEPROM.write(6, (ex_speed>>8 & 0xFF));
   EEPROM.write(7, (ex_speed>>16 & 0xFF));
   EEPROM.write(8, (ex_speed>>24 & 0xFF));
+  EEPROM.write(9, wait);
   EEPROM.commit();
 }
 
@@ -418,6 +487,7 @@ void eeprom_read(void) {
     hover_val = EEPROM.read(0);
     ex_length = EEPROM.read(1) + (EEPROM.read(2)<<8) + (EEPROM.read(3)<<16) + (EEPROM.read(4)<<24);
     ex_speed = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
+    wait = EEPROM.read(9);
 }
 
 
@@ -530,6 +600,18 @@ void bluetooth_rx(void) {
         tx_pattern = 0;
         rx_pattern = 0;
         break;
+
+      case 34:
+        tx_pattern = 34;
+        rx_pattern = 44;
+        break;
+
+      case 44:
+        wait = rx_val;
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
           
 
       }
@@ -575,6 +657,9 @@ void bluetooth_tx(void) {
       bts.print(" 33 : Extension Speed [");
       bts.print(ex_speed);
       bts.print("mm/s]\n");
+      bts.print(" 34 : Sequence Wait [");
+      bts.print(wait);
+      bts.print("s]\n");
       
       bts.print("\n");
       bts.print(" Please enter 11 to 35  ");
@@ -640,6 +725,12 @@ void bluetooth_tx(void) {
     case 33:
       bts.print(" Extension Speed [mm/s] -");
       bts.print(" Please enter 0 to 500 ");
+      tx_pattern = 2;
+      break;
+
+    case 34:
+      bts.print(" Sequence Wait [s] -");
+      bts.print(" Please enter 0 to 255 ");
       tx_pattern = 2;
       break;
                  
@@ -764,15 +855,6 @@ void writeDataInitial(void) {
   file.println("Tether extension experiment");
   file.println("Parameters");
   file.println("Time, Pattern, Pattern");
-  file.close();
-}
-
-
-//Write SD 
-//------------------------------------------------------------------//
-void writeData(void) {
-  file = SD.open(fname, FILE_APPEND);
-  file.println(timeStr + "," + pattern + "," + pattern);
   file.close();
 }
 
