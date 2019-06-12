@@ -93,6 +93,9 @@ File file;
 String fname_buff;
 const char* fname;
 
+String accel_buff;
+const char* accel_out;
+
 typedef struct {
     String  log_time;
     String  log_time_ms;
@@ -126,6 +129,7 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 unsigned char hover_val = 0;
 unsigned int ex_length = 2000;
 unsigned int ex_speed = 200;
+unsigned int ex_accel = 5;
 unsigned char wait = 5;
 
 
@@ -477,7 +481,11 @@ void eeprom_write(void) {
   EEPROM.write(6, (ex_speed>>8 & 0xFF));
   EEPROM.write(7, (ex_speed>>16 & 0xFF));
   EEPROM.write(8, (ex_speed>>24 & 0xFF));
-  EEPROM.write(9, wait);
+  EEPROM.write(9, (ex_accel & 0xFF));
+  EEPROM.write(10, (ex_accel>>8 & 0xFF));
+  EEPROM.write(11, (ex_accel>>16 & 0xFF));
+  EEPROM.write(12, (ex_accel>>24 & 0xFF));
+  EEPROM.write(13, wait);
   EEPROM.commit();
 }
 
@@ -487,7 +495,8 @@ void eeprom_read(void) {
     hover_val = EEPROM.read(0);
     ex_length = EEPROM.read(1) + (EEPROM.read(2)<<8) + (EEPROM.read(3)<<16) + (EEPROM.read(4)<<24);
     ex_speed = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
-    wait = EEPROM.read(9);
+    ex_accel = EEPROM.read(9) + (EEPROM.read(10)<<8) + (EEPROM.read(11)<<16) + (EEPROM.read(12)<<24);
+    wait = EEPROM.read(13);
 }
 
 
@@ -607,6 +616,22 @@ void bluetooth_rx(void) {
         break;
 
       case 44:
+        ex_accel = rx_val;
+        //accel_buff = "$8=" + (String)ex_accel;
+        //accel_out = accel_buff.c_str();
+        SendCommand(STEPMOTOR_I2C_ADDR, "$8="); // Accel
+        SendByte(STEPMOTOR_I2C_ADDR, ex_accel/10);
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
+
+      case 35:
+        tx_pattern = 35;
+        rx_pattern = 45;
+        break;
+
+      case 45:
         wait = rx_val;
         eeprom_write();
         tx_pattern = 0;
@@ -657,7 +682,10 @@ void bluetooth_tx(void) {
       bts.print(" 33 : Extension Speed [");
       bts.print(ex_speed);
       bts.print("mm/s]\n");
-      bts.print(" 34 : Sequence Wait [");
+      bts.print(" 34 : Extension Accel [");
+      bts.print(ex_accel);
+      bts.print("mm/s^2]\n");
+      bts.print(" 35 : Sequence Wait [");
       bts.print(wait);
       bts.print("s]\n");
       
@@ -729,6 +757,12 @@ void bluetooth_tx(void) {
       break;
 
     case 34:
+      bts.print(" Extension Accel [mm/s^2] -");
+      bts.print(" Please enter 1 to 50 ");
+      tx_pattern = 2;
+      break;
+
+    case 35:
       bts.print(" Sequence Wait [s] -");
       bts.print(" Please enter 0 to 255 ");
       tx_pattern = 2;
