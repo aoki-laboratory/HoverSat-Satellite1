@@ -1,8 +1,8 @@
 //------------------------------------------------------------------//
 //Supported MCU:   ESP32 (M5Stack)
 //File Contents:   HoverSat Satellite1
-//Version number:  Ver.1.0
-//Date:            2019.06.08
+//Version number:  Ver.1.1
+//Date:            2019.06.14
 //------------------------------------------------------------------//
  
 //This program supports the following boards:
@@ -25,12 +25,11 @@
 #define   TIMER_INTERRUPT     10      // ms
 #define   LCD
 #define   STEPMOTOR_I2C_ADDR  0x70
-#define   STEP_PER_LENGTH     0.092   // 230 / 400 / 6.25
-#define   STEP_PER_INPUT      0.001
+#define   STEP_PER_LENGTH     0.575  // 230 / 400 
 #define   ONE_ROTATION_LENGTH 230
 // #define  STEPMOTOR_I2C_ADDR 0x71
 
-#define BufferRecords 32
+#define BufferRecords 16
 #define STEPPER_BUFFER  80
 
 
@@ -46,18 +45,18 @@ bool    log_flag = false;
 int     cnt10 = 0;
 
 unsigned long time_ms;
+unsigned long time_stepper = 0;
 unsigned long time_buff = 0;
 unsigned char current_time = 0; 
 unsigned char old_time = 0;  
 
 byte    counter;
 char charBuf[100];
+char charBuf2[100];
 long  abslength = 0;
 boolean inc_flag = false;
 long steps;
 float speed;
-String  stepper_status;
-char status_buffer[STEPPER_BUFFER];
 boolean hasData = false;
 String label = "Tick";
 static const int Limit1Pin = 17;
@@ -67,6 +66,12 @@ int  Limit2State = 1;
 const int stepper_enable = 0;
 char  stepper_enable_status = 1;
 
+// progress
+float  current_length;
+float  current_speed;
+float  current_accel;
+float  old_length=0;
+char stepper_pattern=10;
 
 BluetoothSerial bts;
 String  bts_rx;
@@ -75,11 +80,11 @@ int bts_index = 0;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-//char ssid[] = "Buffalo-G-0CBA";
-//char pass[] = "hh4aexcxesasx";
+char ssid[] = "Buffalo-G-0CBA";
+char pass[] = "hh4aexcxesasx";
 
-char ssid[] = "Macaw";
-char pass[] = "1234567890";
+//char ssid[] = "Macaw";
+//char pass[] = "1234567890";
 
 // Time
 char ntpServer[] = "ntp.jst.mfeed.ad.jp";
@@ -98,9 +103,11 @@ const char* accel_out;
 
 typedef struct {
     String  log_time;
-    String  log_time_ms;
     int     log_pattern;
-    String  log_status;
+    String  log_time_ms;
+    float   log_length;
+    float   log_speed;
+    float   log_accel;
 } RecordType;
 
 static RecordType buffer[2][BufferRecords];
@@ -131,6 +138,7 @@ unsigned int ex_length = 2000;
 unsigned int ex_speed = 200;
 unsigned int ex_accel = 5;
 unsigned char wait = 5;
+unsigned char limit_flag = 1;
 
 
 //Global
@@ -139,7 +147,7 @@ void IRAM_ATTR onTimer(void);
 void SendByte(byte addr, byte b);
 void SendCommand(byte addr, char *c);
 void Timer_Interrupt( void );
-void stepper(long ex_length, float ex_speed);
+void stepper(long ex_length, int ex_speed, int ex_accel);
 void getTimeFromNTP(void);
 void getTime(void);
 void writeData(void);
@@ -158,6 +166,7 @@ void setup() {
   M5.begin();
   Wire.begin();
   EEPROM.begin(128);
+  SD.begin(4, SPI, 24000000, "/sd");
   M5.Lcd.clear();
   M5.Lcd.drawJpgFile(SD, "/Image/Picture.jpg");
   M5.Lcd.setTextColor(BLACK);
@@ -204,16 +213,32 @@ void setup() {
   timerAlarmWrite(timer, TIMER_INTERRUPT * 1000, true);
   timerAlarmEnable(timer);
 
-  SendCommand(STEPMOTOR_I2C_ADDR, "$0=1000"); // mm per step
-  SendCommand(STEPMOTOR_I2C_ADDR, "$1=1000"); // mm per step
-  SendCommand(STEPMOTOR_I2C_ADDR, "$2=1000"); // mm per step
-  SendCommand(STEPMOTOR_I2C_ADDR, "$8=0.5"); // Accel
-  SendCommand(STEPMOTOR_I2C_ADDR, "$16=0"); // Hard Limit
+  SendCommand(STEPMOTOR_I2C_ADDR, "$0=10.8696"); // step/mm
+  SendCommand(STEPMOTOR_I2C_ADDR, "$1=10.8696"); // step/mm
+  SendCommand(STEPMOTOR_I2C_ADDR, "$2=10.8696"); // step/mm
+  //SendCommand(STEPMOTOR_I2C_ADDR, "$8=200"); // Accel
 
-//SendCommand(STEPMOTOR_I2C_ADDR, "G1 X99Y99Z99 F100"); // Accel
+  file = SD.open(fname, FILE_APPEND);
+  if( !file ) {
+    M5.Lcd.setCursor(0, 160);
+    M5.Lcd.println("Failed to open sd");
+  } else {
+    file.print("NTP");
+    file.print(",");
+    file.print("Pattern");
+    file.print(",");
+    file.print("Time");
+    file.print(",");
+    file.print("Length");
+    file.print(",");
+    file.print("Speed");
+    file.print(",");
+    file.print("Accel");
+    file.println(",");
+    file.close();
+  }
 
 
-  
 }
 
 
@@ -224,7 +249,7 @@ void setup() {
 void loop() {
 
   Timer_Interrupt();
-  ReceiveStepperData();
+  //ReceiveStepperData();
   bluetooth_rx();
   bluetooth_tx();
 
@@ -239,11 +264,15 @@ void loop() {
     for (int i = 0; i < BufferRecords; i++) {
         file.print(temp[i].log_time);
         file.print(",");
-        file.print(temp[i].log_time_ms);
-        file.print(",");
         file.print(temp[i].log_pattern);
         file.print(",");
-        //file.print(temp[i].log_status);
+        file.print(temp[i].log_time_ms);
+        file.print(",");
+        file.print(temp[i].log_length);
+        file.print(",");
+        file.print(temp[i].log_speed);
+        file.print(",");
+        file.print(temp[i].log_accel);
         file.println(",");
     }
     file.close();
@@ -254,7 +283,7 @@ void loop() {
       break;
 
     case 11:    
-      stepper( ex_length, ex_speed );
+      stepper( ex_length, ex_speed, ex_accel );
       pattern = 12;
       cnt10 = 0;
       break;
@@ -275,7 +304,7 @@ void loop() {
 
     case 21:
       //( length, speed, accel )
-      stepper( ex_length*-1-1000, ex_speed );
+      stepper( ex_length*-1-1000, ex_speed, ex_accel );
       pattern = 22;
       cnt10 = 0;
       break;
@@ -296,71 +325,101 @@ void loop() {
 
     // CountDown
     case 111:    
-      if( current_time < 1 ) {
-        time_buff = time_ms;
-        pattern = 112;
-        tx_pattern = 11;
-        bts.println( 0 );
-        log_flag = true;
+      if( current_time >= 52  ) {
+        cnt10 = 0;
+        pattern = 113;      
+        hover_flag = true;
+        M5.Lcd.clear();
+        DuctedFan.attach(DuctedFanPin);
+        DuctedFan.write(0);
         break;
       }
       bts.println( 60 - current_time );
       break;
 
     case 112:    
-      hover_flag = true;
-      M5.Lcd.clear();
-      DuctedFan.attach(DuctedFanPin);
-      DuctedFan.write(0);
-      delay(3000);
-      DuctedFan.write(hover_val);
-      delay(5000);
-      pattern = 113;      
-      break;
-
-    case 113:   
-      inc_flag = true; 
-      stepper( ex_length, ex_speed );
-      pattern = 114;
-      cnt10 = 0;
-      break;
-
-    case 114:   
-      if( cnt10 >= 100 ) {
-        pattern = 115;
+      if( current_time < 1 ) {
+        pattern = 111;
+        break;
       }
+      bts.println( 60 - current_time + 60 );
+      break;
+
+    case 113:    
+      if( cnt10 >= 300 ) {
+        DuctedFan.write(hover_val);
+        bts.println(" - Start within 5 seconds -");
+        pattern = 114;
+        cnt10 = 0;
+        break;
+      }    
+      bts.println( 60 - current_time );
+      break;
+
+    case 114:    
+      if( cnt10 >= 500 ) {
+        time_buff = millis();
+        pattern = 115;
+        cnt10 = 0;
+        bts.println( "\n - Sequence start -" );
+        break;
+      }        
       break;
 
     case 115:   
-      if( stepper_enable_status==1 ) {
-        pattern = 116;
-        cnt10 = 0;
-      }
-      break;
-
-    case 116:   
-      if( cnt10 >= wait*100 ) {
-        pattern = 117;
-      }
-      break;
-
-    case 117:
-      //( length, speed, accel )
-      inc_flag = true;
-      stepper( ex_length*-1-1000, ex_speed );
-      pattern = 118;
+      time_stepper = time_ms;
+      stepper_pattern = 0;
+      inc_flag = true; 
+      stepper( ex_length, ex_speed, ex_accel );
+      pattern = 116;
+      tx_pattern = 11;
+      log_flag = true;
       cnt10 = 0;
       break;
 
-    case 118:   
+    case 116:   
       if( cnt10 >= 100 ) {
+        pattern = 117;
+        break;
+      }
+      break;
+
+    case 117:   
+      if( stepper_enable_status==1 ) {
+        pattern = 118;
+        cnt10 = 0;
+        break;
+      }
+      break;
+
+    case 118:   
+      if( cnt10 >= wait*100 ) {
         pattern = 119;
+        time_stepper = time_ms;
+        stepper_pattern = 4;
+        break;
       }
       break;
 
     case 119:
+      //( length, speed, accel )
+      inc_flag = true;
+      stepper( ex_length*-1-1000, ex_speed, ex_accel  );
+      pattern = 120;
+      cnt10 = 0;
+      break;
+
+    case 120:   
+      if( cnt10 >= 100 ) {
+        pattern = 121;
+        break;
+      }
+      break;
+
+    case 121:
       if( stepper_enable_status==1 ) {
         pattern = 0;
+        break;
       }
       break;
 
@@ -399,13 +458,19 @@ void loop() {
     pattern = 21;
   }
 
-  if(Limit1State==0 && Limit2State==0 ) {
-    if(pattern == 13 || pattern == 23 || pattern == 119) {
-      //SendByte(STEPMOTOR_I2C_ADDR, '!');
-      SendByte(STEPMOTOR_I2C_ADDR, 0x18);
-      delay(1000);
-      SendCommand(STEPMOTOR_I2C_ADDR, "$X");
-      pattern = 0;
+  if( limit_flag == 1 ) {
+    if(Limit1State==0 && Limit2State==0 ) {
+      if(pattern == 13 || pattern == 23 || pattern == 120) {
+        //SendByte(STEPMOTOR_I2C_ADDR, '!');
+        SendByte(STEPMOTOR_I2C_ADDR, 0x18);
+        delay(1000);
+        SendCommand(STEPMOTOR_I2C_ADDR, "$X");
+        pattern = 0;
+        stepper_pattern = 10;
+        current_accel = 0;
+        current_speed = 0;
+        current_length = 0;
+      }
     }
   }
 
@@ -423,14 +488,17 @@ void Timer_Interrupt( void ){
 
     cnt10++;
     time_ms = millis()-time_buff;
+    
     getTime();
 
     if (bufferIndex[writeBank] < BufferRecords && log_flag) {
       RecordType* rp = &buffer[writeBank][bufferIndex[writeBank]];
       rp->log_time = timeStr;
-      rp->log_time_ms = time_ms;
       rp->log_pattern = pattern;
-      //rp->log_status = status_buffer;
+      rp->log_time_ms = time_ms;
+      rp->log_length = current_length;
+      rp->log_speed = current_speed;
+      rp->log_accel = current_accel;
       if (++bufferIndex[writeBank] >= BufferRecords) {
           writeBank = !writeBank;
       }      
@@ -439,6 +507,92 @@ void Timer_Interrupt( void ){
     Limit1State = digitalRead(Limit1Pin);
     Limit2State = digitalRead(Limit2Pin);
     stepper_enable_status = digitalRead(stepper_enable);
+
+    if( pattern > 115 && pattern <= 121 ) {
+      switch( stepper_pattern ) {
+      case 0:
+        current_accel = ex_accel;
+        current_speed = ex_accel * (float(time_ms)/1000);
+        current_length = 0.5 * ex_accel * (float(time_ms)/1000) * (float(time_ms)/1000);
+        if( time_ms >= float(ex_speed/ex_accel)*1000 ) {
+          stepper_pattern = 1;
+          time_stepper = time_ms;
+          old_length = current_length;
+          break;
+        }
+        break;
+
+      case 1:
+        current_accel = 0;
+        current_speed = ex_speed;
+        current_length = old_length + ex_speed * ((float(time_ms)-float(time_stepper))/1000);
+        if( ex_length - current_length <= old_length ) {
+          time_stepper = time_ms;
+          old_length = current_length;
+          stepper_pattern = 2;
+          break;
+        }
+        break;
+
+      case 2:
+        current_accel = ex_accel;
+        current_speed = ex_speed - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
+        current_length = old_length + ex_speed * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
+        if( time_ms - time_stepper >= float(ex_speed/ex_accel)*1000 ) {
+          current_length = ex_length;
+          current_speed = 0;
+          current_accel = 0;
+          stepper_pattern = 3;
+          break;
+        }
+        break;
+
+      case 3:
+        break;
+
+      case 4:
+        current_accel = ex_accel;
+        current_speed = ex_accel * (float(time_ms)-float(time_stepper))/1000;
+        current_length = ex_length - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
+        if( float(time_ms)-float(time_stepper) >= float(ex_speed/ex_accel)*1000 ) {
+          stepper_pattern = 5;
+          time_stepper = time_ms;
+          old_length = current_length;
+          break;
+        }
+        break;
+
+      case 5:
+        current_accel = 0;
+        current_speed = ex_speed;
+        current_length = old_length - ex_speed * ((float(time_ms)-float(time_stepper))/1000);
+        /*if( current_length <= ex_length - old_length ) {
+          time_stepper = time_ms;
+          old_length = current_length;
+          stepper_pattern = 6;
+          break;
+        }*/
+        break;
+
+      case 6:
+        current_accel = ex_accel;
+        current_speed = ex_speed - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
+        current_length = old_length - ex_speed * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
+        if( time_ms - time_stepper >= float(ex_speed/ex_accel)*1000 ) {
+          current_length = 0;
+          current_speed = 0;
+          current_accel = 0;
+          stepper_pattern = 10;
+          break;
+        }
+        break;
+
+      case 10: 
+        break;
+
+      }
+    }
+
 
 
 //    totalInterruptCounter++;
@@ -486,6 +640,7 @@ void eeprom_write(void) {
   EEPROM.write(11, (ex_accel>>16 & 0xFF));
   EEPROM.write(12, (ex_accel>>24 & 0xFF));
   EEPROM.write(13, wait);
+  EEPROM.write(14, limit_flag);
   EEPROM.commit();
 }
 
@@ -497,6 +652,7 @@ void eeprom_read(void) {
     ex_speed = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
     ex_accel = EEPROM.read(9) + (EEPROM.read(10)<<8) + (EEPROM.read(11)<<16) + (EEPROM.read(12)<<24);
     wait = EEPROM.read(13);
+    limit_flag = EEPROM.read(14);
 }
 
 
@@ -531,7 +687,13 @@ void bluetooth_rx(void) {
       case 20:
         rx_pattern = 0;
         tx_pattern = 20;
-        pattern = 111;
+        if( current_time >= 52 ) {   
+          pattern = 112;
+          break;
+        } else {
+          pattern = 111;
+          break;
+        }
         break;
         
       case 21:
@@ -637,6 +799,18 @@ void bluetooth_rx(void) {
         tx_pattern = 0;
         rx_pattern = 0;
         break;
+
+      case 36:
+        tx_pattern = 36;
+        rx_pattern = 46;
+        break;
+
+      case 46:
+        limit_flag = rx_val;
+        eeprom_write();
+        tx_pattern = 0;
+        rx_pattern = 0;
+        break;
           
 
       }
@@ -688,6 +862,9 @@ void bluetooth_tx(void) {
       bts.print(" 35 : Sequence Wait [");
       bts.print(wait);
       bts.print("s]\n");
+      bts.print(" 36 : LimitSwitch Enable [");
+      bts.print(limit_flag);
+      bts.print("]\n");
       
       bts.print("\n");
       bts.print(" Please enter 11 to 35  ");
@@ -703,8 +880,14 @@ void bluetooth_tx(void) {
         
     case 11:
       bts.print(time_ms);
-      bts.print("  ");
-      bts.println(pattern);
+      bts.print(", ");
+      bts.print(stepper_pattern);
+      bts.print(", ");
+      bts.print(current_length);
+      bts.print(", ");
+      bts.print(current_speed);
+      bts.print(", ");
+      bts.println(current_accel);
       break;
 
     case 20:
@@ -767,6 +950,12 @@ void bluetooth_tx(void) {
       bts.print(" Please enter 0 to 255 ");
       tx_pattern = 2;
       break;
+
+    case 36:
+      bts.print(" LimitSwitch Enable -");
+      bts.print(" Please enter 0 or 1 ");
+      tx_pattern = 2;
+      break;
                  
     }
 }
@@ -783,17 +972,24 @@ void IRAM_ATTR onTimer() {
 
 // Stepper (mm, mm/s)
 //------------------------------------------------------------------//
-void stepper( long ex_length, float ex_speed ) {
+void stepper( long ex_length, int ex_speed, int ex_accel ) {
   String command;
+  String command2;
 
   memset( charBuf , '\0' , 100 );
+  memset( charBuf2 , '\0' , 100 );
 
   if( inc_flag ) {
     abslength = abslength + ex_length;
     inc_flag = false;
   }
-  steps =  abslength / STEP_PER_LENGTH * STEP_PER_INPUT;
-  speed = ex_speed / 0.88412;
+  steps =  abslength;
+  speed = ex_speed * 100;
+
+  command2.concat("$8=");
+  command2.concat(String(ex_accel*2));
+  command2.toCharArray(charBuf2, 100);
+  SendCommand(STEPMOTOR_I2C_ADDR, charBuf2);
   
   command.concat("G1 ");
   command.concat("X");
@@ -807,7 +1003,7 @@ void stepper( long ex_length, float ex_speed ) {
   command.concat(String(speed));
   command.toCharArray(charBuf, 100);
   SendCommand(STEPMOTOR_I2C_ADDR, charBuf);
-  Serial.println(charBuf);
+  //Serial.println(charBuf);
 
  }
 
@@ -835,7 +1031,7 @@ void SendCommand(byte addr, char *c) {
 
 //Receive Data From Module
 //------------------------------------------------------------------//
-void ReceiveStepperData( void ) {
+/*void ReceiveStepperData( void ) {
 
   int index_stepper = 0;
   Wire.requestFrom(STEPMOTOR_I2C_ADDR, 1);
@@ -849,14 +1045,7 @@ void ReceiveStepperData( void ) {
     delayMicroseconds(10); 
   }
 
-  if (hasData == true) {
-    //stepper_status = status_buffer;
-    //label = status_buffer;
-    //label.trim();
-  } 
-  //bts.print(label);
-
-}
+}*/
 
 
 //Get Time From NTP
