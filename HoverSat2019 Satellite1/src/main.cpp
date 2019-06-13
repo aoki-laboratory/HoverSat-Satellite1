@@ -47,6 +47,7 @@ int     cnt10 = 0;
 unsigned long time_ms;
 unsigned long time_stepper = 0;
 unsigned long time_buff = 0;
+unsigned long time_buff2 = 0;
 unsigned char current_time = 0; 
 unsigned char old_time = 0;  
 
@@ -220,7 +221,7 @@ void setup() {
 
   file = SD.open(fname, FILE_APPEND);
   if( !file ) {
-    M5.Lcd.setCursor(0, 160);
+    M5.Lcd.setCursor(5, 160);
     M5.Lcd.println("Failed to open sd");
   } else {
     file.print("NTP");
@@ -284,12 +285,12 @@ void loop() {
 
     case 11:    
       stepper( ex_length, ex_speed, ex_accel );
+      time_buff2 = millis();
       pattern = 12;
-      cnt10 = 0;
       break;
 
     case 12:
-      if( cnt10 >= 100 ) {
+      if( millis() - time_buff2 >= 1000 ) {
         pattern = 13;
       }
       break;
@@ -306,11 +307,11 @@ void loop() {
       //( length, speed, accel )
       stepper( ex_length*-1-1000, ex_speed, ex_accel );
       pattern = 22;
-      cnt10 = 0;
+      time_buff2 = millis();
       break;
 
     case 22:
-      if( cnt10 >= 100 ) {
+      if( millis() - time_buff2 >= 1000 ) {
         pattern = 13;
       }
       break;
@@ -326,7 +327,7 @@ void loop() {
     // CountDown
     case 111:    
       if( current_time >= 52  ) {
-        cnt10 = 0;
+        time_buff2 = millis();
         pattern = 113;      
         hover_flag = true;
         M5.Lcd.clear();
@@ -346,21 +347,20 @@ void loop() {
       break;
 
     case 113:    
-      if( cnt10 >= 300 ) {
+      if( millis() - time_buff2 >= 3000 ) {
         DuctedFan.write(hover_val);
         bts.println(" - Start within 5 seconds -");
+        time_buff2 = millis();
         pattern = 114;
-        cnt10 = 0;
         break;
       }    
       bts.println( 60 - current_time );
       break;
 
-    case 114:    
-      if( cnt10 >= 500 ) {
+    case 114:   
+      if( millis() - time_buff2 >= 5000 ) {
         time_buff = millis();
         pattern = 115;
-        cnt10 = 0;
         bts.println( "\n - Sequence start -" );
         break;
       }        
@@ -374,11 +374,11 @@ void loop() {
       pattern = 116;
       tx_pattern = 11;
       log_flag = true;
-      cnt10 = 0;
+      time_buff2 = millis();
       break;
 
     case 116:   
-      if( cnt10 >= 100 ) {
+      if( millis() - time_buff2 >= 1000 ) {
         pattern = 117;
         break;
       }
@@ -387,13 +387,13 @@ void loop() {
     case 117:   
       if( stepper_enable_status==1 ) {
         pattern = 118;
-        cnt10 = 0;
+        time_buff2 = millis();
         break;
       }
       break;
 
     case 118:   
-      if( cnt10 >= wait*100 ) {
+      if( millis() - time_buff2 >= wait*1000 ) {
         pattern = 119;
         time_stepper = time_ms;
         stepper_pattern = 4;
@@ -406,11 +406,11 @@ void loop() {
       inc_flag = true;
       stepper( ex_length*-1-1000, ex_speed, ex_accel  );
       pattern = 120;
-      cnt10 = 0;
+      time_buff2 = millis();
       break;
 
     case 120:   
-      if( cnt10 >= 100 ) {
+      if( millis() - time_buff2 >= 1000 ) {
         pattern = 121;
         break;
       }
@@ -418,7 +418,20 @@ void loop() {
 
     case 121:
       if( stepper_enable_status==1 ) {
+        time_buff2 = millis();
+        pattern = 131;
+        break;
+      }
+      break;
+
+    case 131:
+      if( millis() - time_buff2 >= 5000 ) {
+        log_flag = false;
         pattern = 0;
+        tx_pattern = 0;
+        hover_flag = !hover_flag;
+        M5.Lcd.clear();
+        DuctedFan.detach();
         break;
       }
       break;
@@ -460,12 +473,20 @@ void loop() {
 
   if( limit_flag == 1 ) {
     if(Limit1State==0 && Limit2State==0 ) {
-      if(pattern == 13 || pattern == 23 || pattern == 120) {
+      if(pattern == 13 || pattern == 23) {
         //SendByte(STEPMOTOR_I2C_ADDR, '!');
         SendByte(STEPMOTOR_I2C_ADDR, 0x18);
         delay(1000);
         SendCommand(STEPMOTOR_I2C_ADDR, "$X");
         pattern = 0;
+      }
+      if(pattern == 121) {
+        //SendByte(STEPMOTOR_I2C_ADDR, '!');
+        SendByte(STEPMOTOR_I2C_ADDR, 0x18);
+        delay(1000);
+        SendCommand(STEPMOTOR_I2C_ADDR, "$X");
+        time_buff2 = millis();
+        pattern = 131;
         stepper_pattern = 10;
         current_accel = 0;
         current_speed = 0;
@@ -834,7 +855,7 @@ void bluetooth_tx(void) {
       delay(30);
       bts.print("\n\n\n\n\n\n");
       bts.print(" HoverSat Satellite1 (M5Stack version) "
-                         "Test Program Ver1.00\n");
+                         "Test Program Ver1.10\n");
       bts.print("\n");
       bts.print(" Satellite control\n");
       bts.print(" 11 : Telemetry\n");
@@ -881,7 +902,7 @@ void bluetooth_tx(void) {
     case 11:
       bts.print(time_ms);
       bts.print(", ");
-      bts.print(stepper_pattern);
+      bts.print(pattern);
       bts.print(", ");
       bts.print(current_length);
       bts.print(", ");
