@@ -232,19 +232,19 @@ void setup() {
     file.print(",");
     file.print("Pattern");
     file.print(",");
-    file.print("Time");
+    file.print("Time [ms]");
     file.print(",");
-    file.print("Length");
+    file.print("Length [mm]");
     file.print(",");
-    file.print("Speed");
+    file.print("Speed [mm/s]");
     file.print(",");
-    file.print("Accel");
+    file.print("Accel [mm/s^2]");
     file.print(",");
-    file.print("IMUaX");
+    file.print("IMUaX [G]");
     file.print(",");
-    file.print("IMUaY");
+    file.print("IMUaY [G]");
     file.print(",");
-    file.print("IMUgZ");
+    file.print("IMUgZ [deg/s]");
     file.println(",");
     file.close();
   }
@@ -498,7 +498,7 @@ void loop() {
         log_flag = false;
         pattern = 0;
         tx_pattern = 0;
-        hover_flag = !hover_flag;
+        hover_flag = false;
         M5.Lcd.clear();
         DuctedFan.detach();
         break;
