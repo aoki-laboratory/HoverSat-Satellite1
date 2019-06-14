@@ -239,7 +239,8 @@ void setup() {
     file.close();
   }
 
-
+  
+  
 }
 
 
@@ -286,6 +287,9 @@ void loop() {
     case 11:    
       stepper( ex_length, ex_speed, ex_accel );
       time_buff2 = millis();
+
+
+
       pattern = 12;
       break;
 
