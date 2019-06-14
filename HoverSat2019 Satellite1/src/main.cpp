@@ -27,7 +27,6 @@
 #define   STEPMOTOR_I2C_ADDR  0x70
 #define   STEP_PER_LENGTH     0.575  // 230 / 400 
 #define   ONE_ROTATION_LENGTH 230
-// #define  STEPMOTOR_I2C_ADDR 0x71
 
 #define BufferRecords 16
 #define STEPPER_BUFFER  80
@@ -993,13 +992,13 @@ void bluetooth_tx(void) {
       bts.print(time_ms);
       bts.print(", ");
       bts.print(pattern);
-      bts.print(", ");
-      bts.print(current_length);
-      bts.print(", ");
-      bts.print(current_speed);
-      bts.print(", ");
-      bts.print(current_accel);
       bts.println(", ");
+      //bts.print(current_length);
+      //bts.print(", ");
+      //bts.print(current_speed);
+      //bts.print(", ");
+      //bts.print(current_accel);
+      //bts.println(", ");
       //bts.print(IMU.ax);
       //bts.print(", ");
       //bts.print(IMU.ay);
