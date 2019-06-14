@@ -1,7 +1,7 @@
 //------------------------------------------------------------------//
 //Supported MCU:   ESP32 (M5Stack)
 //File Contents:   HoverSat Satellite1
-//Version number:  Ver.1.1
+//Version number:  Ver.1.2
 //Date:            2019.06.14
 //------------------------------------------------------------------//
  
@@ -109,6 +109,9 @@ typedef struct {
     float   log_length;
     float   log_speed;
     float   log_accel;
+    float   log_ax;
+    float   log_ay;
+    float   log_gz;
 } RecordType;
 
 static RecordType buffer[2][BufferRecords];
@@ -146,7 +149,7 @@ unsigned char limit_flag = 1;
 //------------------------------------------------------------------//
 void IRAM_ATTR onTimer(void);
 void SendByte(byte addr, byte b);
-void SendCommand(byte addr, char *c);
+void SendCommand(byte addr, char *ci);
 void Timer_Interrupt( void );
 void stepper(long ex_length, int ex_speed, int ex_accel);
 void getTimeFromNTP(void);
@@ -158,6 +161,8 @@ void bluetooth_rx(void);
 void bluetooth_tx(void);
 void eeprom_write(void);
 void eeprom_read(void);
+void writeByte(uint8_t address, uint8_t subAddress, uint8_t data);
+uint8_t readByte(uint8_t address, uint8_t subAddress);
 
 
 //Setup
@@ -235,11 +240,66 @@ void setup() {
     file.print("Speed");
     file.print(",");
     file.print("Accel");
+    file.print(",");
+    file.print("IMUaX");
+    file.print(",");
+    file.print("IMUaY");
+    file.print(",");
+    file.print("IMUgZ");
     file.println(",");
     file.close();
   }
 
-  
+  IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
+  //IMU.initMPU9250();
+
+  writeByte(MPU9250_ADDRESS, PWR_MGMT_1, 0x00); // Clear sleep mode bit (6), enable all sensors
+  delay(100); // Wait for all registers to reset
+
+  // get stable time source
+  writeByte(MPU9250_ADDRESS, PWR_MGMT_1, 0x01);  // Auto select clock source to be PLL gyroscope reference if ready else
+  delay(200);
+
+  // Configure Gyro and Thermometer
+  // Disable FSYNC and set thermometer and gyro bandwidth to 41 and 42 Hz, respectively;
+  // minimum delay time for this setting is 5.9 ms, which means sensor fusion update rates cannot
+  // be higher than 1 / 0.0059 = 170 Hz
+  // DLPF_CFG = bits 2:0 = 011; this limits the sample rate to 1000 Hz for both
+  // With the MPU9250, it is possible to get gyro sample rates of 32 kHz (!), 8 kHz, or 1 kHz
+  writeByte(MPU9250_ADDRESS, CONFIG, 0x03);
+
+  // Set sample rate = gyroscope output rate/(1 + SMPLRT_DIV)
+  writeByte(MPU9250_ADDRESS, SMPLRT_DIV, 0x04);  // Use a 200 Hz rate; a rate consistent with the filter update rate
+  // determined inset in CONFIG above
+
+  // Set gyroscope full scale range
+  // Range selects FS_SEL and AFS_SEL are 0 - 3, so 2-bit values are left-shifted into positions 4:3
+  uint8_t c = readByte(MPU9250_ADDRESS, GYRO_CONFIG); // get current GYRO_CONFIG register value
+  // c = c & ~0xE0; // Clear self-test bits [7:5]
+  c = c & ~0x02; // Clear Fchoice bits [1:0]
+  c = c & ~0x18; // Clear AFS bits [4:3]
+  c = c | 0 << 3; // Set full scale range for the gyro
+  // c =| 0x00; // Set Fchoice for the gyro to 11 by writing its inverse to bits 1:0 of GYRO_CONFIG
+  writeByte(MPU9250_ADDRESS, GYRO_CONFIG, c); // Write new GYRO_CONFIG value to register
+
+  // Set accelerometer full-scale range configuration
+  c = readByte(MPU9250_ADDRESS, ACCEL_CONFIG); // get current ACCEL_CONFIG register value
+  // c = c & ~0xE0; // Clear self-test bits [7:5]
+  c = c & ~0x18;  // Clear AFS bits [4:3]
+  c = c | 0 << 3; // Set full scale range for the accelerometer
+  writeByte(MPU9250_ADDRESS, ACCEL_CONFIG, c); // Write new ACCEL_CONFIG register value
+
+  // Set accelerometer sample rate configuration
+  // It is possible to get a 4 kHz sample rate from the accelerometer by choosing 1 for
+  // accel_fchoice_b bit [3]; in this case the bandwidth is 1.13 kHz
+  c = readByte(MPU9250_ADDRESS, ACCEL_CONFIG2); // get current ACCEL_CONFIG2 register value
+  c = c & ~0x0F; // Clear accel_fchoice_b (bit 3) and A_DLPFG (bits [2:0])
+  c = c | 0x03;  // Set accelerometer rate to 1 kHz and bandwidth to 41 Hz
+  writeByte(MPU9250_ADDRESS, ACCEL_CONFIG2, c); // Write new ACCEL_CONFIG2 register value
+  // The accelerometer, gyro, and thermometer are set to 1 kHz sample rates,
+  // but all these rates are further reduced by a factor of 5 to 200 Hz because of the SMPLRT_DIV setting
+
+
   
 }
 
@@ -275,6 +335,12 @@ void loop() {
         file.print(temp[i].log_speed);
         file.print(",");
         file.print(temp[i].log_accel);
+        file.print(",");
+        file.print(temp[i].log_ax);
+        file.print(",");
+        file.print(temp[i].log_ay);
+        file.print(",");
+        file.print(temp[i].log_gz);
         file.println(",");
     }
     file.close();
@@ -468,9 +534,11 @@ void loop() {
       DuctedFan.detach();
     } 
   } else if (M5.BtnB.wasPressed() && pattern == 0) {      
+    Wire.begin();
     inc_flag = true;
     pattern = 11;
-  } else if (M5.BtnC.wasPressed() && pattern == 0) {    
+  } else if (M5.BtnC.wasPressed() && pattern == 0) {   
+    Wire.begin(); 
     inc_flag = true;
     pattern = 21;
   }
@@ -499,6 +567,21 @@ void loop() {
     }
   }
 
+  if (IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01) {
+    IMU.readAccelData(IMU.accelCount);
+    IMU.getAres();
+
+    IMU.ax = (float)IMU.accelCount[0] * IMU.aRes; // - accelBias[0];
+    IMU.ay = (float)IMU.accelCount[1] * IMU.aRes; // - accelBias[1];
+
+    IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
+    IMU.getGres();
+
+    // Calculate the gyro value into actual degrees per second
+    // This depends on scale being set
+    IMU.gz = (float)IMU.gyroCount[2] * IMU.gRes;
+  }
+
 }
 
 
@@ -524,6 +607,9 @@ void Timer_Interrupt( void ){
       rp->log_length = current_length;
       rp->log_speed = current_speed;
       rp->log_accel = current_accel;
+      rp->log_ax = IMU.ax;
+      rp->log_ay = IMU.ay;
+      rp->log_gz = IMU.gz;
       if (++bufferIndex[writeBank] >= BufferRecords) {
           writeBank = !writeBank;
       }      
@@ -859,7 +945,7 @@ void bluetooth_tx(void) {
       delay(30);
       bts.print("\n\n\n\n\n\n");
       bts.print(" HoverSat Satellite1 (M5Stack version) "
-                         "Test Program Ver1.10\n");
+                         "Test Program Ver1.20\n");
       bts.print("\n");
       bts.print(" Satellite control\n");
       bts.print(" 11 : Telemetry\n");
@@ -912,7 +998,13 @@ void bluetooth_tx(void) {
       bts.print(", ");
       bts.print(current_speed);
       bts.print(", ");
-      bts.println(current_accel);
+      bts.print(current_accel);
+      bts.println(", ");
+      //bts.print(IMU.ax);
+      //bts.print(", ");
+      //bts.print(IMU.ay);
+      //bts.print(", ");
+      //bts.println(IMU.gz);
       break;
 
     case 20:
@@ -1033,6 +1125,21 @@ void stepper( long ex_length, int ex_speed, int ex_accel ) {
  }
 
 
+//writeByte
+//------------------------------------------------------------------//
+ void writeByte(uint8_t address, uint8_t subAddress, uint8_t data) {
+  M5.I2C.writeByte(address, subAddress, data);
+}
+
+//readByte
+//------------------------------------------------------------------//
+uint8_t readByte(uint8_t address, uint8_t subAddress) {
+  uint8_t result;
+  M5.I2C.readByte(address, subAddress,&result);
+  return (result);
+}
+
+
 //SendByte
 //------------------------------------------------------------------//
 void SendByte(byte addr, byte b) {
@@ -1043,34 +1150,16 @@ void SendByte(byte addr, byte b) {
 
 //SendCommand
 //------------------------------------------------------------------//
-void SendCommand(byte addr, char *c) {
+void SendCommand(byte addr, char *ci) {
   Wire.beginTransmission(addr);
-  while ((*c) != 0) {
-    Wire.write(*c);
-    c++;
+  while ((*ci) != 0) {
+    Wire.write(*ci);
+    ci++;
   }
   Wire.write(0x0d);
   Wire.write(0x0a);
   Wire.endTransmission();
 }
-
-//Receive Data From Module
-//------------------------------------------------------------------//
-/*void ReceiveStepperData( void ) {
-
-  int index_stepper = 0;
-  Wire.requestFrom(STEPMOTOR_I2C_ADDR, 1);
-  while (Wire.available() > 0) {
-    hasData = true;
-    status_buffer[index_stepper] = Wire.read();
-    index_stepper++;
-    if (index_stepper >= STEPPER_BUFFER-1) {
-      break;
-    }
-    delayMicroseconds(10); 
-  }
-
-}*/
 
 
 //Get Time From NTP
