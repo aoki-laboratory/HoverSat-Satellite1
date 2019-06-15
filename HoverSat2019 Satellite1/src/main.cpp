@@ -187,6 +187,7 @@ void setup() {
   M5.Lcd.setTextColor(GREEN ,BLACK);
   M5.Lcd.fillScreen(BLACK);
 
+  Serial.begin(115200);
   bts.begin("M5Stack Satellite1");
   WiFi.begin(ssid, pass);
   while (WiFi.status() != WL_CONNECTED) {
@@ -721,6 +722,23 @@ void Timer_Interrupt( void ){
     break;
 
     case 2:
+      if( tx_pattern == 11 ) {
+        bts.print(time_ms);
+        bts.print(", ");
+        bts.print(pattern);
+        bts.print(", ");
+        bts.print(current_length);
+        bts.print(", ");
+        bts.print(current_speed);
+        bts.print(", ");
+        bts.print(current_accel);
+        bts.print(", ");
+        bts.print(IMU.ax);
+        bts.print(", ");
+        bts.print(IMU.ay);
+        bts.print(", ");
+        bts.println(IMU.gz);
+      }
       break;
     
     case 10:
@@ -989,21 +1007,7 @@ void bluetooth_tx(void) {
       break;
         
     case 11:
-      bts.print(time_ms);
-      bts.print(", ");
-      bts.print(pattern);
-      bts.println(", ");
-      //bts.print(current_length);
-      //bts.print(", ");
-      //bts.print(current_speed);
-      //bts.print(", ");
-      //bts.print(current_accel);
-      //bts.println(", ");
-      //bts.print(IMU.ax);
-      //bts.print(", ");
-      //bts.print(IMU.ay);
-      //bts.print(", ");
-      //bts.println(IMU.gz);
+      //Teremetry @ Interrupt
       break;
 
     case 20:
