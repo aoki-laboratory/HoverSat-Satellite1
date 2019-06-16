@@ -28,7 +28,7 @@
 #define   STEP_PER_LENGTH     0.575  // 230 / 400 
 #define   ONE_ROTATION_LENGTH 230
 
-#define BufferRecords 16
+#define BufferRecords 32
 #define STEPPER_BUFFER  80
 
 
@@ -41,6 +41,7 @@ int     rx_pattern = 0;
 int     rx_val = 0;
 bool    hover_flag = false;
 bool    log_flag = false;
+bool    telemetry_flag = false;
 int     cnt10 = 0;
 
 unsigned long time_ms;
@@ -56,7 +57,7 @@ char charBuf2[100];
 long  abslength = 0;
 boolean inc_flag = false;
 long steps;
-float speed;
+float velocity;
 boolean hasData = false;
 String label = "Tick";
 static const int Limit1Pin = 17;
@@ -68,7 +69,7 @@ char  stepper_enable_status = 1;
 
 // progress
 float  current_length;
-float  current_speed;
+float  current_velocity;
 float  current_accel;
 float  old_length=0;
 char stepper_pattern=10;
@@ -78,13 +79,18 @@ String  bts_rx;
 char bts_rx_buffer[16];
 int bts_index = 0;
 
+//String ssid_buff;
+//String pass_buff;
+//const char* ssid;
+//const char* pass;
+
 // Your WiFi credentials.
 // Set password to "" for open networks.
 //char ssid[] = "Buffalo-G-0CBA";
 //char pass[] = "hh4aexcxesasx";
-
 char ssid[] = "Macaw";
 char pass[] = "1234567890";
+
 
 // Time
 char ntpServer[] = "ntp.jst.mfeed.ad.jp";
@@ -106,7 +112,7 @@ typedef struct {
     int     log_pattern;
     String  log_time_ms;
     float   log_length;
-    float   log_speed;
+    float   log_velocity;
     float   log_accel;
     float   log_ax;
     float   log_ay;
@@ -138,10 +144,11 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 // Parameters
 unsigned char hover_val = 0;
 unsigned int ex_length = 2000;
-unsigned int ex_speed = 200;
+unsigned int ex_velocity = 200;
 unsigned int ex_accel = 5;
 unsigned char wait = 5;
 unsigned char limit_flag = 1;
+unsigned char ssid_pattern = 0;
 
 
 //Global
@@ -150,7 +157,7 @@ void IRAM_ATTR onTimer(void);
 void SendByte(byte addr, byte b);
 void SendCommand(byte addr, char *ci);
 void Timer_Interrupt( void );
-void stepper(long ex_length, int ex_speed, int ex_accel);
+void stepper(long ex_length, int ex_velocity, int ex_accel);
 void getTimeFromNTP(void);
 void getTime(void);
 void writeData(void);
@@ -180,12 +187,30 @@ void setup() {
   M5.Lcd.println("HoverSat");
   M5.Lcd.setCursor(82, 200);
   M5.Lcd.println("Satellite1");
+
+  eeprom_read();
   
   delay(1000);
 
   M5.Lcd.setTextSize(3);
   M5.Lcd.setTextColor(GREEN ,BLACK);
   M5.Lcd.fillScreen(BLACK);
+
+  /*
+  switch( ssid_pattern ) {
+      case 0:
+        ssid_buff = "Buffalo-G-0CBA";
+        pass_buff = "hh4aexcxesasx";
+        break;
+
+      case 1:
+        ssid_buff = "Macaw";
+        pass_buff = "1234567890";
+        break;
+  }
+  ssid = ssid_buff.c_str();
+  pass = pass_buff.c_str();
+  */
 
   Serial.begin(115200);
   bts.begin("M5Stack Satellite1");
@@ -194,8 +219,6 @@ void setup() {
     delay(500);
     M5.Lcd.print(".");
   }
-
-  eeprom_read();
 
   // timeSet
   getTimeFromNTP();
@@ -228,26 +251,6 @@ void setup() {
   if( !file ) {
     M5.Lcd.setCursor(5, 160);
     M5.Lcd.println("Failed to open sd");
-  } else {
-    file.print("NTP");
-    file.print(",");
-    file.print("Pattern");
-    file.print(",");
-    file.print("Time [ms]");
-    file.print(",");
-    file.print("Length [mm]");
-    file.print(",");
-    file.print("Speed [mm/s]");
-    file.print(",");
-    file.print("Accel [mm/s^2]");
-    file.print(",");
-    file.print("IMUaX [G]");
-    file.print(",");
-    file.print("IMUaY [G]");
-    file.print(",");
-    file.print("IMUgZ [deg/s]");
-    file.println(",");
-    file.close();
   }
 
   IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
@@ -332,7 +335,7 @@ void loop() {
         file.print(",");
         file.print(temp[i].log_length);
         file.print(",");
-        file.print(temp[i].log_speed);
+        file.print(temp[i].log_velocity);
         file.print(",");
         file.print(temp[i].log_accel);
         file.print(",");
@@ -346,12 +349,31 @@ void loop() {
     file.close();
   }
 
+  if( telemetry_flag ) {
+    bts.print(time_ms);
+    bts.print(", ");
+    bts.print(pattern);
+    bts.print(", ");
+    bts.print(current_length);
+    bts.print(", ");
+    bts.print(current_velocity);
+    bts.print(", ");
+    bts.print(current_accel);
+    bts.print(", ");
+    bts.print(IMU.ax);
+    bts.print(", ");
+    bts.print(IMU.ay);
+    bts.print(", ");
+    bts.println(IMU.gz);
+    telemetry_flag = false;
+  }
+
   switch (pattern) {
     case 0:
       break;
 
     case 11:    
-      stepper( ex_length, ex_speed, ex_accel );
+      stepper( ex_length, ex_velocity, ex_accel );
       time_buff2 = millis();
 
 
@@ -374,8 +396,8 @@ void loop() {
     
 
     case 21:
-      //( length, speed, accel )
-      stepper( ex_length*-1-1000, ex_speed, ex_accel );
+      //( length, velocity, accel )
+      stepper( ex_length*-1-1000, ex_velocity, ex_accel );
       pattern = 22;
       time_buff2 = millis();
       break;
@@ -440,9 +462,9 @@ void loop() {
       time_stepper = time_ms;
       stepper_pattern = 0;
       inc_flag = true; 
-      stepper( ex_length, ex_speed, ex_accel );
+      stepper( ex_length, ex_velocity, ex_accel );
       pattern = 116;
-      tx_pattern = 11;
+      //tx_pattern = 11;
       log_flag = true;
       time_buff2 = millis();
       break;
@@ -472,9 +494,9 @@ void loop() {
       break;
 
     case 119:
-      //( length, speed, accel )
+      //( length, velocity, accel )
       inc_flag = true;
-      stepper( ex_length*-1-1000, ex_speed, ex_accel  );
+      stepper( ex_length*-1-1000, ex_velocity, ex_accel  );
       pattern = 120;
       time_buff2 = millis();
       break;
@@ -561,7 +583,7 @@ void loop() {
         pattern = 131;
         stepper_pattern = 10;
         current_accel = 0;
-        current_speed = 0;
+        current_velocity = 0;
         current_length = 0;
       }
     }
@@ -605,7 +627,7 @@ void Timer_Interrupt( void ){
       rp->log_pattern = pattern;
       rp->log_time_ms = time_ms;
       rp->log_length = current_length;
-      rp->log_speed = current_speed;
+      rp->log_velocity = current_velocity;
       rp->log_accel = current_accel;
       rp->log_ax = IMU.ax;
       rp->log_ay = IMU.ay;
@@ -623,9 +645,9 @@ void Timer_Interrupt( void ){
       switch( stepper_pattern ) {
       case 0:
         current_accel = ex_accel;
-        current_speed = ex_accel * (float(time_ms)/1000);
+        current_velocity = ex_accel * (float(time_ms)/1000);
         current_length = 0.5 * ex_accel * (float(time_ms)/1000) * (float(time_ms)/1000);
-        if( time_ms >= float(ex_speed/ex_accel)*1000 ) {
+        if( time_ms >= float(ex_velocity/ex_accel)*1000 ) {
           stepper_pattern = 1;
           time_stepper = time_ms;
           old_length = current_length;
@@ -635,8 +657,8 @@ void Timer_Interrupt( void ){
 
       case 1:
         current_accel = 0;
-        current_speed = ex_speed;
-        current_length = old_length + ex_speed * ((float(time_ms)-float(time_stepper))/1000);
+        current_velocity = ex_velocity;
+        current_length = old_length + ex_velocity * ((float(time_ms)-float(time_stepper))/1000);
         if( ex_length - current_length <= old_length ) {
           time_stepper = time_ms;
           old_length = current_length;
@@ -647,11 +669,11 @@ void Timer_Interrupt( void ){
 
       case 2:
         current_accel = ex_accel;
-        current_speed = ex_speed - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
-        current_length = old_length + ex_speed * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
-        if( time_ms - time_stepper >= float(ex_speed/ex_accel)*1000 ) {
+        current_velocity = ex_velocity - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
+        current_length = old_length + ex_velocity * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
+        if( time_ms - time_stepper >= float(ex_velocity/ex_accel)*1000 ) {
           current_length = ex_length;
-          current_speed = 0;
+          current_velocity = 0;
           current_accel = 0;
           stepper_pattern = 3;
           break;
@@ -663,9 +685,9 @@ void Timer_Interrupt( void ){
 
       case 4:
         current_accel = ex_accel;
-        current_speed = ex_accel * (float(time_ms)-float(time_stepper))/1000;
+        current_velocity = ex_accel * (float(time_ms)-float(time_stepper))/1000;
         current_length = ex_length - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
-        if( float(time_ms)-float(time_stepper) >= float(ex_speed/ex_accel)*1000 ) {
+        if( float(time_ms)-float(time_stepper) >= float(ex_velocity/ex_accel)*1000 ) {
           stepper_pattern = 5;
           time_stepper = time_ms;
           old_length = current_length;
@@ -675,8 +697,8 @@ void Timer_Interrupt( void ){
 
       case 5:
         current_accel = 0;
-        current_speed = ex_speed;
-        current_length = old_length - ex_speed * ((float(time_ms)-float(time_stepper))/1000);
+        current_velocity = ex_velocity;
+        current_length = old_length - ex_velocity * ((float(time_ms)-float(time_stepper))/1000);
         /*if( current_length <= ex_length - old_length ) {
           time_stepper = time_ms;
           old_length = current_length;
@@ -687,11 +709,11 @@ void Timer_Interrupt( void ){
 
       case 6:
         current_accel = ex_accel;
-        current_speed = ex_speed - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
-        current_length = old_length - ex_speed * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
-        if( time_ms - time_stepper >= float(ex_speed/ex_accel)*1000 ) {
+        current_velocity = ex_velocity - ex_accel * ((float(time_ms)-float(time_stepper))/1000);
+        current_length = old_length - ex_velocity * (float(time_ms)-float(time_stepper))/1000 - 0.5 * ex_accel * ((float(time_ms)-float(time_stepper))/1000) * ((float(time_ms)-float(time_stepper))/1000);
+        if( time_ms - time_stepper >= float(ex_velocity/ex_accel)*1000 ) {
           current_length = 0;
-          current_speed = 0;
+          current_velocity = 0;
           current_accel = 0;
           stepper_pattern = 10;
           break;
@@ -706,7 +728,7 @@ void Timer_Interrupt( void ){
 
 
 
-//    totalInterruptCounter++;
+  //    totalInterruptCounter++;
 
     iTimer10++;
     switch( iTimer10 ) {
@@ -723,21 +745,7 @@ void Timer_Interrupt( void ){
 
     case 2:
       if( tx_pattern == 11 ) {
-        bts.print(time_ms);
-        bts.print(", ");
-        bts.print(pattern);
-        bts.print(", ");
-        bts.print(current_length);
-        bts.print(", ");
-        bts.print(current_speed);
-        bts.print(", ");
-        bts.print(current_accel);
-        bts.print(", ");
-        bts.print(IMU.ax);
-        bts.print(", ");
-        bts.print(IMU.ay);
-        bts.print(", ");
-        bts.println(IMU.gz);
+        telemetry_flag = true;
       }
       break;
     
@@ -759,10 +767,10 @@ void eeprom_write(void) {
   EEPROM.write(2, (ex_length>>8 & 0xFF));
   EEPROM.write(3, (ex_length>>16 & 0xFF));
   EEPROM.write(4, (ex_length>>24 & 0xFF));
-  EEPROM.write(5, (ex_speed & 0xFF));
-  EEPROM.write(6, (ex_speed>>8 & 0xFF));
-  EEPROM.write(7, (ex_speed>>16 & 0xFF));
-  EEPROM.write(8, (ex_speed>>24 & 0xFF));
+  EEPROM.write(5, (ex_velocity & 0xFF));
+  EEPROM.write(6, (ex_velocity>>8 & 0xFF));
+  EEPROM.write(7, (ex_velocity>>16 & 0xFF));
+  EEPROM.write(8, (ex_velocity>>24 & 0xFF));
   EEPROM.write(9, (ex_accel & 0xFF));
   EEPROM.write(10, (ex_accel>>8 & 0xFF));
   EEPROM.write(11, (ex_accel>>16 & 0xFF));
@@ -777,7 +785,7 @@ void eeprom_write(void) {
 void eeprom_read(void) {
     hover_val = EEPROM.read(0);
     ex_length = EEPROM.read(1) + (EEPROM.read(2)<<8) + (EEPROM.read(3)<<16) + (EEPROM.read(4)<<24);
-    ex_speed = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
+    ex_velocity = EEPROM.read(5) + (EEPROM.read(6)<<8) + (EEPROM.read(7)<<16) + (EEPROM.read(8)<<24);
     ex_accel = EEPROM.read(9) + (EEPROM.read(10)<<8) + (EEPROM.read(11)<<16) + (EEPROM.read(12)<<24);
     wait = EEPROM.read(13);
     limit_flag = EEPROM.read(14);
@@ -815,6 +823,27 @@ void bluetooth_rx(void) {
       case 20:
         rx_pattern = 0;
         tx_pattern = 20;
+        file = SD.open(fname, FILE_APPEND);
+        file.print("NTP");
+        file.print(",");
+        file.print("Pattern");
+        file.print(",");
+        file.print("Time [ms]");
+        file.print(",");
+        file.print("Length [mm]");
+        file.print(",");
+        file.print("Velocity [mm/s]");
+        file.print(",");
+        file.print("Accel [mm/s^2]");
+        file.print(",");
+        file.print("IMUaX [G]");
+        file.print(",");
+        file.print("IMUaY [G]");
+        file.print(",");
+        file.print("IMUgZ [deg/s]");
+        file.println(",");
+        file.close();
+
         if( current_time >= 52 ) {   
           pattern = 112;
           break;
@@ -894,7 +923,7 @@ void bluetooth_rx(void) {
         break;
 
       case 43:
-        ex_speed = rx_val;
+        ex_velocity = rx_val;
         eeprom_write();
         tx_pattern = 0;
         rx_pattern = 0;
@@ -981,8 +1010,8 @@ void bluetooth_tx(void) {
       bts.print(" 32 : Extension length [");
       bts.print(ex_length);
       bts.print("mm]\n");
-      bts.print(" 33 : Extension Speed [");
-      bts.print(ex_speed);
+      bts.print(" 33 : Extension velocity [");
+      bts.print(ex_velocity);
       bts.print("mm/s]\n");
       bts.print(" 34 : Extension Accel [");
       bts.print(ex_accel);
@@ -1007,7 +1036,7 @@ void bluetooth_tx(void) {
       break;
         
     case 11:
-      //Teremetry @ Interrupt
+      //Telemetry @ Interrupt
       break;
 
     case 20:
@@ -1027,17 +1056,17 @@ void bluetooth_tx(void) {
 
     case 22:
       bts.print(" Start Extruding...\n");
-      tx_pattern = 11;
+      tx_pattern = 0;
       break;
 
     case 23:
       bts.print(" Start Winding...\n");
-      tx_pattern = 11;
+      tx_pattern = 0;
       break;
 
     case 24:
       bts.print(" Pause...\n");
-      tx_pattern = 11;
+      tx_pattern = 0;
       break;
 
               
@@ -1054,7 +1083,7 @@ void bluetooth_tx(void) {
       break;
 
     case 33:
-      bts.print(" Extension Speed [mm/s] -");
+      bts.print(" Extension velocity [mm/s] -");
       bts.print(" Please enter 0 to 500 ");
       tx_pattern = 2;
       break;
@@ -1087,12 +1116,12 @@ void IRAM_ATTR onTimer() {
   portENTER_CRITICAL_ISR(&timerMux);
   interruptCounter=1;
   portEXIT_CRITICAL_ISR(&timerMux);
- }
+}
 
 
 // Stepper (mm, mm/s)
 //------------------------------------------------------------------//
-void stepper( long ex_length, int ex_speed, int ex_accel ) {
+void stepper( long ex_length, int ex_velocity, int ex_accel ) {
   String command;
   String command2;
 
@@ -1104,7 +1133,7 @@ void stepper( long ex_length, int ex_speed, int ex_accel ) {
     inc_flag = false;
   }
   steps =  abslength;
-  speed = ex_speed * 100;
+  velocity = ex_velocity * 100;
 
   command2.concat("$8=");
   command2.concat(String(ex_accel*2));
@@ -1120,12 +1149,12 @@ void stepper( long ex_length, int ex_speed, int ex_accel ) {
   command.concat(String(steps));
   command.concat(" ");
   command.concat("F");
-  command.concat(String(speed));
+  command.concat(String(velocity));
   command.toCharArray(charBuf, 100);
   SendCommand(STEPMOTOR_I2C_ADDR, charBuf);
   //Serial.println(charBuf);
 
- }
+}
 
 
 //writeByte
