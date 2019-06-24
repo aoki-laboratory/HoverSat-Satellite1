@@ -86,10 +86,10 @@ int bts_index = 0;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-//char ssid[] = "Buffalo-G-0CBA";
-//char pass[] = "hh4aexcxesasx";
-char ssid[] = "Macaw";
-char pass[] = "1234567890";
+char ssid[] = "Buffalo-G-0CBA";
+char pass[] = "hh4aexcxesasx";
+//char ssid[] = "Macaw";
+//char pass[] = "1234567890";
 
 
 // Time
@@ -116,6 +116,7 @@ typedef struct {
     float   log_accel;
     float   log_ax;
     float   log_ay;
+    float   log_az;
     float   log_gz;
 } RecordType;
 
@@ -149,6 +150,7 @@ unsigned int ex_accel = 5;
 unsigned char wait = 5;
 unsigned char limit_flag = 1;
 unsigned char ssid_pattern = 0;
+
 
 
 //Global
@@ -254,6 +256,7 @@ void setup() {
   }
 
   IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
+  delay(100);
   //IMU.initMPU9250();
 
   writeByte(MPU9250_ADDRESS, PWR_MGMT_1, 0x00); // Clear sleep mode bit (6), enable all sensors
@@ -342,6 +345,8 @@ void loop() {
         file.print(temp[i].log_ax);
         file.print(",");
         file.print(temp[i].log_ay);
+        file.print(",");
+        file.print(temp[i].log_az);
         file.print(",");
         file.print(temp[i].log_gz);
         file.println(",");
@@ -593,8 +598,9 @@ void loop() {
     IMU.readAccelData(IMU.accelCount);
     IMU.getAres();
 
-    IMU.ax = (float)IMU.accelCount[0] * IMU.aRes; // - accelBias[0];
-    IMU.ay = (float)IMU.accelCount[1] * IMU.aRes; // - accelBias[1];
+    IMU.ax = (float)IMU.accelCount[0] * IMU.aRes;
+    IMU.ay = (float)IMU.accelCount[1] * IMU.aRes;
+    IMU.az = (float)IMU.accelCount[2] * IMU.aRes;
 
     IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
     IMU.getGres();
@@ -631,6 +637,7 @@ void Timer_Interrupt( void ){
       rp->log_accel = current_accel;
       rp->log_ax = IMU.ax;
       rp->log_ay = IMU.ay;
+      rp->log_az = IMU.az;
       rp->log_gz = IMU.gz;
       if (++bufferIndex[writeBank] >= BufferRecords) {
           writeBank = !writeBank;
