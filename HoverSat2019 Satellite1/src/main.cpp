@@ -86,10 +86,10 @@ int bts_index = 0;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-char ssid[] = "Buffalo-G-0CBA";
-char pass[] = "hh4aexcxesasx";
-//char ssid[] = "Macaw";
-//char pass[] = "1234567890";
+//char ssid[] = "Buffalo-G-0CBA";
+//char pass[] = "hh4aexcxesasx";
+char ssid[] = "Macaw";
+char pass[] = "1234567890";
 
 
 // Time
@@ -127,6 +127,11 @@ static volatile int bufferIndex[2] = {0, 0};
 
 // MPU9250
 MPU9250 IMU; 
+
+float accelBiasX = 0;
+float accelBiasY = 0;
+float accelBiasZ = 0;
+float gyroBiasZ = 0;
 
 // DuctedFan
 static const int DuctedFanPin = 15;
@@ -369,6 +374,8 @@ void loop() {
     bts.print(", ");
     bts.print(IMU.ay);
     bts.print(", ");
+    bts.print(IMU.az);
+    bts.print(", ");
     bts.println(IMU.gz);
     telemetry_flag = false;
   }
@@ -448,6 +455,7 @@ void loop() {
         DuctedFan.write(hover_val);
         bts.println(" - Start within 5 seconds -");
         time_buff2 = millis();
+        log_flag = true;
         pattern = 114;
         break;
       }    
@@ -470,7 +478,6 @@ void loop() {
       stepper( ex_length, ex_velocity, ex_accel );
       pattern = 116;
       //tx_pattern = 11;
-      log_flag = true;
       time_buff2 = millis();
       break;
 
@@ -598,16 +605,16 @@ void loop() {
     IMU.readAccelData(IMU.accelCount);
     IMU.getAres();
 
-    IMU.ax = (float)IMU.accelCount[0] * IMU.aRes;
-    IMU.ay = (float)IMU.accelCount[1] * IMU.aRes;
-    IMU.az = (float)IMU.accelCount[2] * IMU.aRes;
+    IMU.ax = (float)IMU.accelCount[0] * IMU.aRes - accelBiasX;
+    IMU.ay = (float)IMU.accelCount[1] * IMU.aRes - accelBiasY;
+    IMU.az = (float)IMU.accelCount[2] * IMU.aRes - accelBiasZ;
 
     IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
     IMU.getGres();
 
     // Calculate the gyro value into actual degrees per second
     // This depends on scale being set
-    IMU.gz = (float)IMU.gyroCount[2] * IMU.gRes;
+    IMU.gz = (float)IMU.gyroCount[2] * IMU.gRes - gyroBiasZ;
   }
 
 }
@@ -847,9 +854,16 @@ void bluetooth_rx(void) {
         file.print(",");
         file.print("IMUaY [G]");
         file.print(",");
+        file.print("IMUaZ [G]");
+        file.print(",");
         file.print("IMUgZ [deg/s]");
         file.println(",");
         file.close();
+
+        accelBiasX = IMU.ax;
+        accelBiasY = IMU.ay;
+        accelBiasZ = IMU.az - 1;
+        gyroBiasZ = IMU.gz;
 
         if( current_time >= 52 ) {   
           pattern = 112;
