@@ -88,8 +88,10 @@ int bts_index = 0;
 // Set password to "" for open networks.
 //char ssid[] = "Buffalo-G-0CBA";
 //char pass[] = "hh4aexcxesasx";
-char ssid[] = "Macaw";
-char pass[] = "1234567890";
+char ssid[] = "X1Extreme-Hotspot";
+char pass[] = "5]6C458w";
+//char ssid[] = "Macaw";
+//char pass[] = "1234567890";
 
 
 // Time
