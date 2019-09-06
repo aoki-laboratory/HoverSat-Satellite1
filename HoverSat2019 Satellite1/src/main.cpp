@@ -28,7 +28,7 @@
 #define   STEP_PER_LENGTH     0.575  // 230 / 400 
 #define   ONE_ROTATION_LENGTH 230
 
-#define BufferRecords 16
+#define BufferRecords 32
 #define STEPPER_BUFFER  80
 
 
