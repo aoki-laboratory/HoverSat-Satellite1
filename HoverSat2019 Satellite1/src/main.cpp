@@ -67,6 +67,9 @@ int  Limit2State = 1;
 const int stepper_enable = 0;
 char  stepper_enable_status = 1;
 
+static const int TSND_121 = 13;
+int  TSND_121_ENABLE = 0;
+
 // progress
 float  current_length;
 float  current_velocity;
@@ -178,6 +181,7 @@ void eeprom_write(void);
 void eeprom_read(void);
 void writeByte(uint8_t address, uint8_t subAddress, uint8_t data);
 uint8_t readByte(uint8_t address, uint8_t subAddress);
+void TSND121( void );
 
 
 //Setup
@@ -244,6 +248,7 @@ void setup() {
   pinMode(Limit1Pin, INPUT);
   pinMode(Limit2Pin, INPUT);
   pinMode(stepper_enable, INPUT);
+//  pinMode(TSND_121, OUTPUT);
 
   // Initialize Timer Interrupt
   timer = timerBegin(0, 80, true);
@@ -458,10 +463,20 @@ void loop() {
         bts.println(" - Start within 5 seconds -");
         time_buff2 = millis();
         log_flag = true;
-        pattern = 114;
+        pattern = 122;
         break;
       }    
       bts.println( 60 - current_time );
+      break;
+
+    case 122:   
+      if( millis() - time_buff2 >= 3000 ) {
+        time_buff2 = millis();
+        pattern = 114;
+        TSND121();
+        bts.println( "\n - Log start -" );
+        break;
+      }        
       break;
 
     case 114:   
@@ -526,6 +541,7 @@ void loop() {
       if( stepper_enable_status==1 ) {
         time_buff2 = millis();
         pattern = 131;
+        TSND121();
         break;
       }
       break;
@@ -916,6 +932,12 @@ void bluetooth_rx(void) {
         pattern = 0;
         break;
 
+      case 25:
+        rx_pattern = 0;
+        TSND121();
+        tx_pattern = 25;   
+        break;
+
       case 31:
         tx_pattern = 31;
         rx_pattern = 41;
@@ -1025,6 +1047,7 @@ void bluetooth_tx(void) {
       bts.print(" 22 : Start Extruding\n");
       bts.print(" 23 : Start Winding\n");
       bts.print(" 24 : Pause\n");
+      bts.print(" 25 : Log\n");
       bts.print("\n");
       bts.print(" Set parameters  [Current val]\n");
       bts.print(" 31 : DuctedFan Output [");
@@ -1092,6 +1115,11 @@ void bluetooth_tx(void) {
       tx_pattern = 0;
       break;
 
+    case 25:
+      bts.print(" Log\n");
+      tx_pattern = 0;
+      break;
+
               
     case 31:
       bts.print(" DuctedFan Output [%] -");
@@ -1132,6 +1160,15 @@ void bluetooth_tx(void) {
     }
 }
 
+// TSND 121
+//------------------------------------------------------------------//
+void TSND121( void ) {
+    TSND_121_ENABLE = 1;
+    digitalWrite( TSND_121, HIGH );
+    delay(2000);
+    digitalWrite( TSND_121, LOW );
+
+}
 
 // IRAM
 //------------------------------------------------------------------//
